@@ -1,6 +1,6 @@
 # Galaxy Morphology Classifier
 
-EfficientNet-B2 fine-tuned to classify galaxy images into 10 morphological categories, trained on the [Galaxy10 DECals Dataset](https://astronn.readthedocs.io/en/latest/galaxy10.html).
+EfficientNet-B2 fine-tuned to classify galaxy images into 10 morphological categories, trained on the [Galaxy10 DECals Dataset](https://www.kaggle.com/datasets/aryansanjeevarora/galaxy-morphology).
 
 ## Classes
 
