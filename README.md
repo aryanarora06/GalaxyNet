@@ -51,6 +51,8 @@ Kaggle normally mounts it at:
 /kaggle/input/galaxy-morphology
 ```
 
+The training script auto-detects whether the class folders are directly in the dataset root or inside a nested folder such as `data/`.
+
 If the dataset contains the class folders directly, run:
 
 ```bash
@@ -66,14 +68,14 @@ python train.py --data-dir /kaggle/input/galaxy-morphology/data
 On Kaggle GPU T4 x2, `train.py` automatically uses `torch.nn.DataParallel` across both GPUs. A larger batch often works better with two T4s:
 
 ```bash
-python train.py --data-dir /kaggle/input/galaxy-morphology/data --batch-size 64
+python train.py --data-dir /kaggle/input/galaxy-morphology --batch-size 64
 ```
 
 To force or disable multi-GPU mode:
 
 ```bash
-python train.py --data-dir /kaggle/input/galaxy-morphology/data --parallel dataparallel
-python train.py --data-dir /kaggle/input/galaxy-morphology/data --parallel none
+python train.py --data-dir /kaggle/input/galaxy-morphology --parallel dataparallel
+python train.py --data-dir /kaggle/input/galaxy-morphology --parallel none
 ```
 
 When DataParallel is enabled, `torch.compile` is skipped for reliability.

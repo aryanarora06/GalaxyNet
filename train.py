@@ -16,8 +16,84 @@ from sklearn.model_selection import train_test_split
 from tqdm.auto import tqdm
 
 logging.getLogger("torch._inductor.utils").setLevel(logging.ERROR)
-import torch._inductor.config as inductor_config
-inductor_config.max_autotune_gemm = False
+try:
+    import torch._inductor.config as inductor_config
+    if hasattr(inductor_config, "max_autotune_gemm"):
+        inductor_config.max_autotune_gemm = False
+except Exception as exc:
+    print(f"[!] Torch Inductor config skipped: {exc}")
+
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp", ".tif", ".tiff")
+
+def contains_images(path):
+    if not os.path.isdir(path):
+        return False
+    try:
+        names = os.listdir(path)
+    except OSError:
+        return False
+    return any(name.lower().endswith(IMAGE_EXTENSIONS) for name in names)
+
+def is_imagefolder_dir(path):
+    if not os.path.isdir(path):
+        return False
+    try:
+        child_dirs = [
+            os.path.join(path, name)
+            for name in os.listdir(path)
+            if os.path.isdir(os.path.join(path, name))
+        ]
+    except OSError:
+        return False
+    return sum(contains_images(child) for child in child_dirs) >= 2
+
+def find_imagefolder_dir(root):
+    if not root or not os.path.isdir(root):
+        return None
+    if is_imagefolder_dir(root):
+        return root
+
+    preferred = [
+        os.path.join(root, "data"),
+        os.path.join(root, "Data"),
+        os.path.join(root, "images"),
+        os.path.join(root, "Images"),
+    ]
+    for candidate in preferred:
+        if is_imagefolder_dir(candidate):
+            return candidate
+
+    for current_root, dirnames, _ in os.walk(root):
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        depth = os.path.relpath(current_root, root).count(os.sep)
+        if depth > 2:
+            dirnames[:] = []
+            continue
+        if is_imagefolder_dir(current_root):
+            return current_root
+    return None
+
+def describe_data_candidates(root):
+    if not root or not os.path.isdir(root):
+        return f"  {root} (not found)"
+
+    lines = []
+    for current_root, dirnames, _ in os.walk(root):
+        dirnames[:] = [name for name in dirnames if not name.startswith(".")]
+        depth = os.path.relpath(current_root, root).count(os.sep)
+        if depth > 2:
+            dirnames[:] = []
+            continue
+        child_count = 0
+        try:
+            child_count = sum(
+                os.path.isdir(os.path.join(current_root, name))
+                for name in os.listdir(current_root)
+            )
+        except OSError:
+            pass
+        lines.append(f"  {current_root} ({child_count} subfolders)")
+    return "\n".join(lines[:25])
 
 def default_data_dir():
     candidates = [
@@ -26,7 +102,11 @@ def default_data_dir():
         "/kaggle/input/galaxy-morphology",
         "data",
     ]
-    return next((path for path in candidates if path and os.path.isdir(path)), candidates[1])
+    for candidate in candidates:
+        resolved = find_imagefolder_dir(candidate)
+        if resolved:
+            return resolved
+    return candidates[1]
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -126,6 +206,19 @@ if not os.path.isdir(DATA_DIR):
         f"Dataset directory not found: {DATA_DIR}\n"
         "Pass --data-dir /path/to/data or set GALAXY_DATA_DIR."
     )
+
+resolved_data_dir = find_imagefolder_dir(DATA_DIR)
+if not resolved_data_dir:
+    raise FileNotFoundError(
+        f"Could not find an ImageFolder dataset under: {DATA_DIR}\n"
+        "Expected class folders containing image files, for example data/Barred_Spiral/*.png.\n"
+        "Candidate folders found:\n"
+        f"{describe_data_candidates(DATA_DIR)}"
+    )
+if resolved_data_dir != DATA_DIR:
+    print(f"Resolved dataset directory: {resolved_data_dir}")
+    DATA_DIR = resolved_data_dir
+
 base_dataset = datasets.ImageFolder(root=DATA_DIR)
 NUM_CLASSES  = len(base_dataset.classes)
 print(f"Found {NUM_CLASSES} classes: {base_dataset.classes}")
