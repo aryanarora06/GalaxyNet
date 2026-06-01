@@ -85,7 +85,7 @@ Use 7-Zip or other compression utilities.
 
 1. Go to kaggle.com
 2. Create a new notebook
-3. Upload `data.zip` and add dataset. **Name it exactly `galaxy-morphology`**
+3. Upload `data.zip` and add dataset. **Name it exactly `galaxy-morphology`** and UPDATE DATA PATH IN train.py (path of data folder)
 4. Set the accelerator to **GPU T4 x2**
 5. Upload `train.py` and run:
 
