@@ -1,16 +1,9 @@
-import sys
+import argparse
 import torch
 import torch.nn as nn
 from torchvision import models
 from torchvision.transforms import v2
 from PIL import Image
-
-# ==========================================
-# Configuration
-# ==========================================
-MODEL_PATH = 'best_galaxy_model.pth'
-IMAGE_SIZE = 260
-TTA_N      = 8
 
 CLASS_NAMES = [
     'Barred_Spiral', 'Cigar_Smooth', 'Disturbed', 'Edge_On_Bulge',
@@ -18,6 +11,16 @@ CLASS_NAMES = [
     'Unbarred_Loose_Spiral', 'Unbarred_Tight_Spiral'
 ]
 NUM_CLASSES = len(CLASS_NAMES)
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Classify one galaxy image.")
+    parser.add_argument("image_path", nargs="?", help="Path to a galaxy image.")
+    parser.add_argument("--model-path", default="best_galaxy_model.pth", help="Path to trained checkpoint.")
+    parser.add_argument("--image-size", type=int, default=260)
+    parser.add_argument("--tta-n", type=int, default=8)
+    return parser.parse_args()
+
+args = parse_args()
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 USE_AMP    = torch.cuda.is_available()
@@ -31,7 +34,7 @@ model.classifier = nn.Sequential(
     nn.Dropout(p=0.3),
     nn.Linear(model.classifier[1].in_features, NUM_CLASSES)
 )
-model.load_state_dict(torch.load(MODEL_PATH, map_location=device, weights_only=True))
+model.load_state_dict(torch.load(args.model_path, map_location=device, weights_only=True))
 model = model.to(device)
 model.eval()
 
@@ -41,7 +44,7 @@ model.eval()
 # Normalize is applied once here, not inside the TTA loop
 base_transform = v2.Compose([
     v2.ToImage(),
-    v2.Resize((IMAGE_SIZE, IMAGE_SIZE), antialias=True),
+    v2.Resize((args.image_size, args.image_size), antialias=True),
     v2.ToDtype(torch.float32, scale=True),
     v2.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])
 ])
@@ -67,11 +70,11 @@ def predict(image_path):
 
     accumulated = None
     with torch.no_grad(), torch.amp.autocast(AMP_DEVICE, enabled=USE_AMP):
-        for _ in range(TTA_N):
+        for _ in range(args.tta_n):
             probs = torch.softmax(model(tta_transform(tensor)), dim=1)
             accumulated = probs if accumulated is None else accumulated + probs
 
-    avg_probs   = accumulated / TTA_N
+    avg_probs   = accumulated / args.tta_n
     confidence, pred_idx = avg_probs.squeeze().max(dim=0)
 
     print(f"Image     : {image_path}")
@@ -84,8 +87,5 @@ def predict(image_path):
         print(f"  {name:<25} {prob * 100:5.1f}%  {bar}")
 
 if __name__ == '__main__':
-    if len(sys.argv) >= 2:
-        image_path = sys.argv[1]
-    else:
-        image_path = input("Enter path to image: ").strip()
+    image_path = args.image_path or input("Enter path to image: ").strip()
     predict(image_path)

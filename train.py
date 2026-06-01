@@ -1,3 +1,4 @@
+import argparse
 import logging
 import math
 import os
@@ -18,20 +19,52 @@ logging.getLogger("torch._inductor.utils").setLevel(logging.ERROR)
 import torch._inductor.config as inductor_config
 inductor_config.max_autotune_gemm = False
 
+def default_data_dir():
+    candidates = [
+        os.environ.get("GALAXY_DATA_DIR"),
+        "/kaggle/input/galaxy-morphology/data",
+        "/kaggle/input/galaxy-morphology",
+        "data",
+    ]
+    return next((path for path in candidates if path and os.path.isdir(path)), candidates[1])
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Train and test EfficientNet-B2 for galaxy morphology classification."
+    )
+    parser.add_argument("--data-dir", default=default_data_dir(), help="ImageFolder dataset directory.")
+    parser.add_argument("--output-model", default="best_galaxy_model.pth", help="Where to save the best checkpoint.")
+    parser.add_argument("--batch-size", type=int, default=32)
+    parser.add_argument("--image-size", type=int, default=260)
+    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--patience", type=int, default=5)
+    parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--warmup-epochs", type=int, default=5)
+    parser.add_argument("--num-workers", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--tta-n", type=int, default=8)
+    parser.add_argument("--no-pretrained", action="store_true", help="Skip ImageNet weights, useful for offline smoke tests.")
+    parser.add_argument("--no-compile", action="store_true", help="Disable torch.compile even when CUDA is available.")
+    return parser.parse_args()
+
+args = parse_args()
+
 # ==========================================
 # 1. Configuration & Hyperparameters
 # ==========================================
-DATA_DIR = '/kaggle/input/datasets/[USERNAME]/galaxy-morphology/data' #UPDATE BEFORE RUNNING
+DATA_DIR = args.data_dir
 
-BATCH_SIZE    = 32
-IMAGE_SIZE    = 260   
-EPOCHS        = 30    
-PATIENCE      = 5     
-LEARNING_RATE = 3e-4
-WARMUP_EPOCHS = 5     
+BATCH_SIZE    = args.batch_size
+IMAGE_SIZE    = args.image_size
+EPOCHS        = args.epochs
+PATIENCE      = args.patience
+LEARNING_RATE = args.learning_rate
+WARMUP_EPOCHS = args.warmup_epochs
+OUTPUT_MODEL  = args.output_model
 
-NUM_WORKERS = 4
+NUM_WORKERS = args.num_workers
 PIN_MEMORY  = True
+PERSISTENT_WORKERS = NUM_WORKERS > 0
 
 CUTMIX_ALPHA = 1.0
 MIXUP_ALPHA  = 0.2
@@ -42,7 +75,7 @@ device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 USE_AMP    = torch.cuda.is_available()
 AMP_DEVICE = 'cuda' if USE_AMP else 'cpu'
 
-SEED = 42
+SEED = args.seed
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -53,6 +86,11 @@ if torch.cuda.is_available():
 # 2. In-Memory Data Pre-loading (With OOM Guard)
 # ==========================================
 print("Scanning directory structure...")
+if not os.path.isdir(DATA_DIR):
+    raise FileNotFoundError(
+        f"Dataset directory not found: {DATA_DIR}\n"
+        "Pass --data-dir /path/to/data or set GALAXY_DATA_DIR."
+    )
 base_dataset = datasets.ImageFolder(root=DATA_DIR)
 NUM_CLASSES  = len(base_dataset.classes)
 print(f"Found {NUM_CLASSES} classes: {base_dataset.classes}")
@@ -151,10 +189,10 @@ sampler = WeightedRandomSampler(
 
 train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, sampler=sampler,
                           num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY,
-                          persistent_workers=True, drop_last=True)
+                          persistent_workers=PERSISTENT_WORKERS, drop_last=True)
 val_loader   = DataLoader(val_dataset,   batch_size=BATCH_SIZE, shuffle=False,
                           num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY,
-                          persistent_workers=True, drop_last=True)
+                          persistent_workers=PERSISTENT_WORKERS, drop_last=True)
 
 # ==========================================
 # 6. Native v2 CutMix & MixUp Implementation
@@ -166,8 +204,9 @@ mixup  = v2.MixUp(num_classes=NUM_CLASSES, alpha=MIXUP_ALPHA)
 # ==========================================
 # 7. Model Setup (EfficientNet-B2)
 # ==========================================
-print("\nInitializing EfficientNet-B2 with pre-trained ImageNet weights...")
-model = models.efficientnet_b2(weights=models.EfficientNet_B2_Weights.DEFAULT)
+print("\nInitializing EfficientNet-B2...")
+weights = None if args.no_pretrained else models.EfficientNet_B2_Weights.DEFAULT
+model = models.efficientnet_b2(weights=weights)
 
 num_ftrs = model.classifier[1].in_features
 model.classifier = nn.Sequential(
@@ -179,7 +218,7 @@ model = model.to(device)
 _v = tuple(int(x) for x in torch.__version__.split('+')[0].split('.')[:2])
 _torch_ge_2 = _v >= (2, 0)
 
-if _torch_ge_2 and torch.cuda.is_available():
+if _torch_ge_2 and torch.cuda.is_available() and not args.no_compile:
     print("Compiling model with torch.compile...")
     model = torch.compile(model, mode="default")
 
@@ -309,7 +348,10 @@ for epoch in range(EPOCHS):
         epochs_without_improvement = 0
         clean_state_dict = {k.replace('_orig_mod.', ''): v
                             for k, v in model.state_dict().items()}
-        torch.save(clean_state_dict, 'best_galaxy_model.pth')
+        output_dir = os.path.dirname(OUTPUT_MODEL)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        torch.save(clean_state_dict, OUTPUT_MODEL)
         print(f"  --> Saved best model checkpoint (Val Acc: {best_val_acc:.4f})")
     else:
         epochs_without_improvement += 1
@@ -321,7 +363,7 @@ for epoch in range(EPOCHS):
 # ==========================================
 # 11. Fast GPU Test-Time Augmentation (TTA)
 # ==========================================
-TTA_N = 8
+TTA_N = args.tta_n
 
 print("\nLoading best model for test evaluation...")
 best_model = models.efficientnet_b2(weights=None)
@@ -331,7 +373,7 @@ best_model.classifier = nn.Sequential(
     nn.Linear(best_model.classifier[1].in_features, NUM_CLASSES)
 )
 best_model.load_state_dict(
-    torch.load('best_galaxy_model.pth', map_location=device, weights_only=True)
+    torch.load(OUTPUT_MODEL, map_location=device, weights_only=True)
 )
 best_model = best_model.to(device)
 best_model.eval()
@@ -361,8 +403,8 @@ fast_tta_loader  = DataLoader(
     shuffle=False,
     num_workers=NUM_WORKERS,
     pin_memory=PIN_MEMORY,
-    persistent_workers=True,
-    drop_last=False 
+    persistent_workers=PERSISTENT_WORKERS,
+    drop_last=False
 )
 
 def predict_tta_gpu(model, base_tensors, n_augments=TTA_N):
@@ -386,7 +428,8 @@ print(f"\nFinal Test Accuracy (GPU TTA n={TTA_N}): {correct_test / total_test * 
 
 baseline_loader = DataLoader(
     test_dataset, batch_size=BATCH_SIZE, shuffle=False,
-    num_workers=NUM_WORKERS, persistent_workers=True, drop_last=False
+    num_workers=NUM_WORKERS, pin_memory=PIN_MEMORY,
+    persistent_workers=PERSISTENT_WORKERS, drop_last=False
 )
 correct_base, total_base = 0, 0
 with torch.no_grad():
