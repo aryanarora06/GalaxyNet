@@ -63,6 +63,21 @@ If the dataset contains a nested `data/` folder, run:
 python train.py --data-dir /kaggle/input/galaxy-morphology/data
 ```
 
+On Kaggle GPU T4 x2, `train.py` automatically uses `torch.nn.DataParallel` across both GPUs. A larger batch often works better with two T4s:
+
+```bash
+python train.py --data-dir /kaggle/input/galaxy-morphology/data --batch-size 64
+```
+
+To force or disable multi-GPU mode:
+
+```bash
+python train.py --data-dir /kaggle/input/galaxy-morphology/data --parallel dataparallel
+python train.py --data-dir /kaggle/input/galaxy-morphology/data --parallel none
+```
+
+When DataParallel is enabled, `torch.compile` is skipped for reliability.
+
 Training runs for up to 30 epochs with early stopping. The best checkpoint is saved as `best_galaxy_model.pth` in the notebook working directory.
 
 ## Convert From H5

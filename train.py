@@ -43,11 +43,44 @@ def parse_args():
     parser.add_argument("--num-workers", type=int, default=4)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--tta-n", type=int, default=8)
+    parser.add_argument(
+        "--parallel",
+        choices=["auto", "none", "dataparallel"],
+        default="auto",
+        help="Use DataParallel automatically on multi-GPU CUDA systems, disable it, or force it.",
+    )
     parser.add_argument("--no-pretrained", action="store_true", help="Skip ImageNet weights, useful for offline smoke tests.")
     parser.add_argument("--no-compile", action="store_true", help="Disable torch.compile even when CUDA is available.")
     return parser.parse_args()
 
 args = parse_args()
+
+def resolve_parallel_mode(requested_mode):
+    if requested_mode == "none" or not torch.cuda.is_available():
+        return "none"
+
+    gpu_count = torch.cuda.device_count()
+    if requested_mode == "dataparallel" and gpu_count < 2:
+        print("[!] DataParallel requested, but fewer than 2 CUDA GPUs are available. Using a single device.")
+        return "none"
+    if requested_mode == "auto" and gpu_count < 2:
+        return "none"
+    return "dataparallel"
+
+def unwrap_model(model):
+    unwrapped = model
+    if isinstance(unwrapped, nn.DataParallel):
+        unwrapped = unwrapped.module
+    return getattr(unwrapped, "_orig_mod", unwrapped)
+
+def clean_state_dict(model):
+    cleaned = {}
+    for key, value in model.state_dict().items():
+        for prefix in ("module.", "_orig_mod."):
+            while key.startswith(prefix):
+                key = key[len(prefix):]
+        cleaned[key] = value
+    return cleaned
 
 # ==========================================
 # 1. Configuration & Hyperparameters
@@ -74,6 +107,8 @@ MIXUP_PROB   = 0.3
 device     = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 USE_AMP    = torch.cuda.is_available()
 AMP_DEVICE = 'cuda' if USE_AMP else 'cpu'
+GPU_COUNT  = torch.cuda.device_count() if torch.cuda.is_available() else 0
+PARALLEL_MODE = resolve_parallel_mode(args.parallel)
 
 SEED = args.seed
 random.seed(SEED)
@@ -218,7 +253,13 @@ model = model.to(device)
 _v = tuple(int(x) for x in torch.__version__.split('+')[0].split('.')[:2])
 _torch_ge_2 = _v >= (2, 0)
 
-if _torch_ge_2 and torch.cuda.is_available() and not args.no_compile:
+if PARALLEL_MODE == "dataparallel":
+    device_names = [torch.cuda.get_device_name(i) for i in range(GPU_COUNT)]
+    print(f"Using DataParallel across {GPU_COUNT} GPUs: {device_names}")
+    if _torch_ge_2 and torch.cuda.is_available() and not args.no_compile:
+        print("Skipping torch.compile because DataParallel is enabled.")
+    model = nn.DataParallel(model)
+elif _torch_ge_2 and torch.cuda.is_available() and not args.no_compile:
     print("Compiling model with torch.compile...")
     model = torch.compile(model, mode="default")
 
@@ -236,7 +277,7 @@ def build_scheduler(optimizer, warmup_steps, total_steps):
 # ==========================================
 # 9. Optimizer & Dual Loss Setup
 # ==========================================
-_base_model = getattr(model, '_orig_mod', model)
+_base_model = unwrap_model(model)
 
 optimizer = optim.AdamW([
     {'params': _base_model.features.parameters(),   'lr': LEARNING_RATE * 0.05},
@@ -346,12 +387,11 @@ for epoch in range(EPOCHS):
     if val_acc > best_val_acc:
         best_val_acc = val_acc
         epochs_without_improvement = 0
-        clean_state_dict = {k.replace('_orig_mod.', ''): v
-                            for k, v in model.state_dict().items()}
+        checkpoint_state = clean_state_dict(model)
         output_dir = os.path.dirname(OUTPUT_MODEL)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        torch.save(clean_state_dict, OUTPUT_MODEL)
+        torch.save(checkpoint_state, OUTPUT_MODEL)
         print(f"  --> Saved best model checkpoint (Val Acc: {best_val_acc:.4f})")
     else:
         epochs_without_improvement += 1
@@ -376,6 +416,8 @@ best_model.load_state_dict(
     torch.load(OUTPUT_MODEL, map_location=device, weights_only=True)
 )
 best_model = best_model.to(device)
+if PARALLEL_MODE == "dataparallel":
+    best_model = nn.DataParallel(best_model)
 best_model.eval()
 
 tta_base_transforms = v2.Compose([
