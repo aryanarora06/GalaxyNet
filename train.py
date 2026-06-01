@@ -21,7 +21,7 @@ inductor_config.max_autotune_gemm = False
 # ==========================================
 # 1. Configuration & Hyperparameters
 # ==========================================
-DATA_DIR = '/kaggle/input/datasets/aryansanjeevarora/galaxy-morphology/data'
+DATA_DIR = '/kaggle/input/datasets/[USERNAME]/galaxy-morphology/data' #UPDATE BEFORE RUNNING
 
 BATCH_SIZE    = 32
 IMAGE_SIZE    = 260   
