@@ -44,7 +44,7 @@ All of the above are pre-installed on Kaggle.
 
 ## Step 1 — Download the Dataset
 
-Download `Galaxy10_DECals.h5` from [Zenodo](https://zenodo.org/record/8430298).
+Download `Galaxy10_DECals.h5` (link above).
 
 ## Step 2 — Convert to Image Folders
 
