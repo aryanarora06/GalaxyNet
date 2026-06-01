@@ -111,7 +111,7 @@ python predict.py path/to/galaxy.jpg
 python predict.py
 ```
 
-## Example output:
+## Example Output:
 
 <img width="432" height="357" alt="image" src="https://github.com/user-attachments/assets/818c489f-8aaf-4815-81e7-a56606ee19a7" />
 
