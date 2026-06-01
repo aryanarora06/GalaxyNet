@@ -111,16 +111,28 @@ python predict.py path/to/galaxy.jpg
 python predict.py
 ```
 
-Example output:
+## Example output:
 
-```
-Image     : galaxy.jpg
-Prediction: Barred_Spiral
-Confidence: 87.3%
+<img width="432" height="357" alt="image" src="https://github.com/user-attachments/assets/818c489f-8aaf-4815-81e7-a56606ee19a7" />
 
-All class probabilities:
-  Barred_Spiral              87.3%  ██████████████████████████████████
-  Unbarred_Tight_Spiral       6.1%  ██
-  Unbarred_Loose_Spiral       3.4%  █
-  ...
-```
+
+### Test Image: NGC 4414 (Spiral Galaxy)  
+### Top Prediction: Unbarred_Tight_Spiral  
+### Confidence: 54.6%  
+
+### Class Probabilities
+
+| Classification | Probability | Visual |
+| :--- | :--- | :--- |
+| *Unbarred_Tight_Spiral* | *54.6%* | █████████████████████ |
+| Unbarred_Loose_Spiral | 17.4% | ██████ |
+| Disturbed | 7.3% | ██ |
+| Round_Smooth | 5.5% | ██ |
+| Barred_Spiral | 4.3% | █ |
+| Inbetween_Smooth | 3.6% | █ |
+| Merging | 3.0% | █ |
+| Edge_On_No_Bulge | 2.1% | |
+| Edge_On_Bulge | 2.0% | |
+| Cigar_Smooth | 0.2% | |
+
+Note: In astronomy, NGC 4414 is classified as an unbarred flocculent spiral, which aligns perfectly with the model's top prediction of an unbarred tight spiral.
